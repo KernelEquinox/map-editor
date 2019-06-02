@@ -586,7 +586,6 @@ int main(int, char**)
                 {
                     for (tile_x = 0; tile_x < tileset_width; tile_x++)
                     {
-                        printf("%d: y=%d, x=%d, tile=%02x, wxh=%dx%d\n", i, tile_y, tile_x, *tiles[tile_y][tile_x], tileset_width, tileset_height);
                         if (first_run) glGenTextures(1, &tile_textures[i]);
                         glBindTexture(GL_TEXTURE_2D, tile_textures[i]);
 
