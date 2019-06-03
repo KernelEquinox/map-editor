@@ -1,5 +1,5 @@
 File Formats
---------
+=====
 Below is a bit of information about how each of the files is laid out.
 
 Tileset
