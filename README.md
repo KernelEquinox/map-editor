@@ -6,25 +6,51 @@ I needed a solution that would open arbitrary tileset, cell, and map files, so I
 
 Building
 --------
-Linux:
+This program requies `libglfw`. Below are building instructions for various operating systems.
+
+### Linux
+Debian/Ubuntu:
 ```
 apt-get install libglfw-dev
 make
 ```
 
-Mac:
+Fedora/CentOS/Red Hat:
+```
+yum -y install mesa-libGL-devel glfw-devel
+make
+```
+
+**Note:** CentOS may require the Fedora EPEL repository, which you can add by running the following command:
+```
+yum -y install https://dl.fedoraproject.org/pub/epel/epel-release-latest-7.noarch.rpm
+```
+
+Arch Linux (X11):
+```
+pacman -S glfw-x11
+make
+```
+
+**Note:** If your version of Arch Linux uses Wayland instead of X11, run the following command instead:
+```
+pacman -S glfw-wayland
+make
+```
+
+### Mac
 ```
 brew install glfw
 make
 ```
 
-MSYS2:
+### MSYS2
 ```
 pacman -S --noconfirm --needed mingw-w64-x86_64-toolchain mingw-w64-x86_64-glfw
 mingw32-make.exe
 ```
 
-Visual Studio or whatever:
+### Visual Studio or whatever
 ```
 (just run build_win32.bat)
 ```
@@ -35,6 +61,8 @@ When you first start the program, you'll be presented with this screen:
 <br>![main window](https://user-images.githubusercontent.com/15955749/58767119-937d9380-854c-11e9-99f3-09eef54530b4.png)
 
 Clicking on each checkbox shows the associated window, and clicking the button switches what editing mode you're currently in, all of which are covered below.
+
+![change mode](https://user-images.githubusercontent.com/15955749/58827258-321afa80-8608-11e9-8f24-da35d99f67a4.gif)
 
 Windows
 --------
