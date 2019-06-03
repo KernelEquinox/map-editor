@@ -10,10 +10,8 @@ Installation
 --------
 
 Linux:
-```
-apt-get install libglfw-dev
-make
-```
+
+Install `libglfw` via your distro's package manager. Debian: `libglfw-dev`; Arch: `glfw-x11` or `glfw-wayland`
 
 Mac:
 ```
