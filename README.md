@@ -79,6 +79,28 @@ When in **Tile Editing Mode**, you can draw on the tileset using the 4 available
 
 **Note:** When editing the tileset, the cells and map update with the new tile(s) automatically.
 
+### Palette Window
+The Palette window is for modifying the current palette for Gen II games.
+<br>![palette](https://user-images.githubusercontent.com/15955749/59137941-dcb85380-894f-11e9-8b4f-7b9f4c3aa0e9.png)
+
+You can load existing tilesets via assembly file or binary file.
+
+When saving the palette, the palette indices (two per byte) will be saved as an assembly file.
+
+Palette editing works in **any mode**, and the available palette colors are as follows:
+- Grey
+- Red
+- Green
+- Blue
+- Yellow
+- Brown
+- Roof color (dynamic)
+- Message color (text)
+
+![edit_palette](https://user-images.githubusercontent.com/15955749/59138098-a6c79f00-8950-11e9-847a-5e6076c71803.gif)
+
+**Note:** When editing the palette, the tileset, cells, and map all update with the new color(s) automatically.
+
 ### Cells Window
 The Cells window is for modifying the map cells, which are the building blocks of the map.
 <br>![cells_window](https://user-images.githubusercontent.com/15955749/58767278-6fbb4d00-854e-11e9-9faf-b9102cad7fb9.png)
