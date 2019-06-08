@@ -1129,11 +1129,18 @@ int main(int, char**)
                 if (tileset_data)
                 {
                     // Correct the pixels and stuff
+                    /*
+                     * BL         DG         LG         WH
+                     *       |          |          |      
+                     * 00         55         AA         FF
+                     *       |          |          |
+                     * 00-2A    2B--7F     80--D4    D5-FF
+                     */
                     for (int a = 0; a < (tileset_width * tileset_height); a++)
                     {
-                        if (tileset_data[a] > 0x80) tileset_data[a] = WHITE;
-                        else if (tileset_data[a] > 0x40) tileset_data[a] = LGREY;
-                        else if (tileset_data[a] > 0x00) tileset_data[a] = DGREY;
+                        if (tileset_data[a] > 0xD5) tileset_data[a] = WHITE;
+                        else if (tileset_data[a] >= 0x80 && tileset_data[a] <= 0xD4) tileset_data[a] = LGREY;
+                        else if (tileset_data[a] >= 0x2B && tileset_data[a] <= 0x7F) tileset_data[a] = DGREY;
                         else tileset_data[a] = BLACK;
                     }
 
