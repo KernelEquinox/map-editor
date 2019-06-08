@@ -341,7 +341,6 @@ char* parse_file(const char* filename, int* filesize)
  * @param data - Data to be saved
  * @param filename - Full path of the file to be saved
  * @param filesize - Size of the data to be written
- * @param tex_offset - Offset for cell correction, otherwise 0
  *
  * @return void - It'll work guys, trust me
  */
@@ -763,7 +762,8 @@ int main(int, char**)
 
     /*----------------------  cell  data   ------------------------------*/
     unsigned char cell_tiles[8192][16];    // shhh
-    unsigned char current_tile = 0x01;
+    unsigned char current_tile = 0x00;
+    unsigned char current_tile_id = 0x00;
 
     int cell_width = 8;
     int cell_height = 8;
@@ -771,7 +771,7 @@ int main(int, char**)
 
     /*----------------------  map  data   -------------------------------*/
     unsigned char map_cells[8192];         // don't question it
-    unsigned char current_cell = 0x01;
+    unsigned char current_cell = 0x00;
 
     int map_width = 4;
     int map_height = 4;
@@ -942,7 +942,7 @@ int main(int, char**)
                 for (tile_x = 0; tile_x < tileset_width; tile_x++)
                 {
                     cur_pos = ImGui::GetCursorPos();
-                    ImGui::Image((void*)(intptr_t)tile_textures[i++], ImVec2(tile_size, tile_size));
+                    ImGui::Image((void*)(intptr_t)(use_palette ? palette_textures[i++] : tile_textures[i++]), ImVec2(tile_size, tile_size));
                     ImGui::SetCursorPos(ImVec2(cur_pos.x + tile_size, cur_pos.y));
                 }
                 ImGui::SetCursorPos(ImVec2(orig_x, (cur_pos.y + tile_size)));
@@ -1019,8 +1019,11 @@ int main(int, char**)
                         regen_palette = true;
                     }
                     // Select the tile if in cell editing mode
-                    else if (edit_mode == CELL_EDIT)
+                    else if (edit_mode == CELL_EDIT && clicked_inside)
+                    {
                         current_tile = tile_textures[tex_id];
+                        current_tile_id = tex_id;
+                    }
                 }
             }
 
@@ -1110,7 +1113,7 @@ int main(int, char**)
 
             ImGui::Text("Current Tile: ");
             ImGui::SameLine();
-            ImGui::Image((void*)(intptr_t)current_tile, ImVec2(tile_size, tile_size));
+            ImGui::Image((void*)(intptr_t)(use_palette ? palette_textures[current_tile_id] : tile_textures[current_tile_id]), ImVec2(tile_size, tile_size));
 
             ImGui::NewLine();
 
@@ -1616,7 +1619,7 @@ int main(int, char**)
                 ImGui::SetCursorPos(ImVec2(cur_cell_x, cur_cell_y));
             }
 
-            // Make tileset area draggable
+            // Make cell area draggable
             ImVec2 drag_area = ImVec2(8*4*8 * cell_zoom, 8*4*8 * cell_zoom);
             ImGui::SetCursorPos(ImVec2(orig_x, orig_y));
             ImGui::InvisibleButton("canvas", drag_area);
@@ -1668,9 +1671,10 @@ int main(int, char**)
                     {
                         // Set tile (default: 0)
                         int tile_index = (tile_y * 4) + tile_x;
-                        cell_tiles[(cell_y * cell_width) + cell_x][tile_index] = current_tile;
+                        int tex_offset = (use_palette ? palette_textures[0] : tile_textures[0]);
+                        cell_tiles[(cell_y * cell_width) + cell_x][tile_index] = current_tile - tex_offset;
                     }
-                    else
+                    else if (edit_mode == MAP_EDIT && clicked_inside)
                         current_cell = (cell_y * cell_width) + cell_x;
                 }
             }
@@ -1725,7 +1729,7 @@ int main(int, char**)
 
 
 
-            // Display current tile
+            // Display current cell
             ImGui::Text("Current Cell: ");
             ImGui::SameLine();
 
@@ -1872,7 +1876,7 @@ int main(int, char**)
 
 
 
-            // Make tileset area draggable
+            // Make map area draggable
             ImVec2 drag_area = ImVec2(map_width*4*8 * map_zoom, map_height*4*8 * map_zoom);
             ImGui::SetCursorPos(ImVec2(orig_x, orig_y));
             ImGui::InvisibleButton("canvas", drag_area);
@@ -1918,7 +1922,7 @@ int main(int, char**)
 
                     if (edit_mode == MAP_EDIT && clicked_inside)
                     {
-                        // Set tile (default: 0)
+                        // Set cell (default: 0)
                         int cell_index = (map_y * map_width) + map_x;
                         map_cells[cell_index] = current_cell;
                     }
