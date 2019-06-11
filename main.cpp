@@ -4,6 +4,9 @@
 // Still too lazy to comment, I'll do it next time
 // Also, the "c" in "0.1c" stands for "color" ;)
 
+// Man, I really need to stop being so lazy
+// This time, the "d" in "0.1d" stands for "data"
+
 #include "imgui.h"
 #include "imgui_internal.h"
 #include "imgui_impl_glfw.h"
@@ -49,9 +52,15 @@
 #define COL_ROOF    255.0f/255.0f,  41.0f/255.0f,   173.0f/255.0f
 #define COL_MSG     255.0f/255.0f,  255.0f/255.0f,  255.0f/255.0f
 
+// Editing modes
 #define TILE_EDIT 0
 #define CELL_EDIT 1
 #define MAP_EDIT  2
+
+// Output formats
+#define FMT_INTSYS 0    //  db  069h
+#define FMT_REDNEX 1    //  db  $69
+#define FMT_BINARY 2    //  0x69
 
 #if defined(IMGUI_IMPL_OPENGL_LOADER_GL3W)
 #include <GL/gl3w.h>    // Initialize with gl3wInit()
@@ -341,28 +350,67 @@ char* parse_file(const char* filename, int* filesize)
  * @param data - Data to be saved
  * @param filename - Full path of the file to be saved
  * @param filesize - Size of the data to be written
+ * @param format - Format to write the data in
  *
  * @return void - It'll work guys, trust me
  */
-static void save_file(unsigned char *data, const char* filename, int filesize)
+static void save_file(unsigned char *data, const char* filename, int filesize, int format)
 {
     int i = 0;
     int x = 0;
     FILE* f = ImFileOpen(filename, "w");
 
-    // Loop through all data
-    while (i < filesize)
+    // Not sure if the compiler takes care of this, but I'll optimize the loop anyway
+    switch(format)
     {
-        // Define each line
-        fprintf(f, "\tdb\t");
+        /*
+         * Intelligent Systems format:
+         *         db      069h
+         */
+        case FMT_INTSYS:
+            // Loop through all data
+            while (i < filesize)
+            {
+                // Define each 8-byte line
+                fprintf(f, "\tdb\t");
+                for (x = 0; x < 7; x++)
+                {
+                    fprintf(f, "0%02xh,", data[i++]);
+                    if (i == filesize) break;
+                }
+                fprintf(f, "0%02xh\n", data[i++]);
+            }
+            break;
 
-        for (x = 0; x < 7; x++)
-        {
-            fprintf(f, "0%02xh,", data[i++]);
-            if (i == filesize) break;
-        }
+        /*
+         * Rednex GB Dev System format:
+         *         db      $69
+         */
+        case FMT_REDNEX:
+            // Loop through all data
+            while (i < filesize)
+            {
+                // Define each 8-byte line
+                fprintf(f, "\tdb\t");
+                for (x = 0; x < 7; x++)
+                {
+                    fprintf(f, "$%02x,", data[i++]);
+                    if (i == filesize) break;
+                }
+                fprintf(f, "$%02x\n", data[i++]);
+            }
+            break;
 
-        fprintf(f, "0%02xh\n", data[i++]);
+        /*
+         * Binary format:
+         *   Literally just binary data
+         */
+        case FMT_BINARY:
+            fwrite(data, 1, filesize, f);
+            break;
+
+        default:
+            break;
     }
 
     fclose(f);
@@ -468,6 +516,7 @@ int main(int, char**)
 
     unsigned int edit_mode = TILE_EDIT;
 
+    bool auto_resize = true;
     ImGuiWindowFlags window_flags = ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_HorizontalScrollbar;
 
 
@@ -786,6 +835,9 @@ int main(int, char**)
     const char *cell_path = "./";
     const char *map_path = "./";
 
+    // Default to IntSys output format
+    static int output_format = FMT_INTSYS;
+
 
 
     // Allocate defaults
@@ -869,8 +921,24 @@ int main(int, char**)
 
             ImGui::NewLine();
 
+            ImGui::Text("Output Format:");
+            const char* items[] = {
+                "IntSys (069h)",
+                "Rednex ($69)",
+                "Binary (0x69)"
+            };
+            ImGui::SetNextItemWidth(120);
+            ImGui::Combo("", &output_format, items, IM_ARRAYSIZE(items));
+
+            ImGui::NewLine();
+
+            // Determine whether to use auto-sizing or not
+            if (ImGui::Checkbox("Auto-Resize Windows", &auto_resize)) window_flags ^= ImGuiWindowFlags_AlwaysAutoResize;
+
+            ImGui::NewLine();
+
             // Version info, might update this sometimes??
-            ImGui::Text("Map Test Thingy v0.1c");
+            ImGui::Text("Map Test Thingy v0.1d");
 
             // Only set zoom button size on initial render
             if (zoom_btn_size == 0.0f) zoom_btn_size = ImGui::GetFrameHeight();
@@ -970,8 +1038,8 @@ int main(int, char**)
                 win_pos = ImGui::GetWindowPos();
 
                 // Check where the mouse was clicked relative to the current window
-                int pos_x = mouse_pos.x - win_pos.x - style.WindowPadding.x;
-                int pos_y = mouse_pos.y - win_pos.y - style.WindowPadding.y - ImGui::GetCurrentWindow()->TitleBarHeight();
+                int pos_x = mouse_pos.x - win_pos.x - style.WindowPadding.x + ImGui::GetScrollX();
+                int pos_y = mouse_pos.y - win_pos.y - style.WindowPadding.y + ImGui::GetScrollY() - ImGui::GetCurrentWindow()->TitleBarHeight();
 
                 // Check if the mouse is currently within the bounds of the tileset area
                 int max_width = tileset_width * 8 * tile_zoom;
@@ -1183,6 +1251,7 @@ int main(int, char**)
                 first_palette = true;
                 regen_palette = true;
                 tileset_path = tileset_open.getLastDirectory();
+                current_tile = tile_textures[0];
             }
 
             // Show "Save" dialog
@@ -1192,7 +1261,7 @@ int main(int, char**)
             if (strlen(save_path) > 0)
             {
                 char *file_data = compress_tiles((unsigned char*)tiles, tileset_width * 8 * tileset_height * 8);
-                save_file((unsigned char*)file_data, tileset_save.getChosenPath(), tileset_width * 8 * ((tileset_height * 8) / 4));
+                save_file((unsigned char*)file_data, tileset_save.getChosenPath(), tileset_width * 8 * ((tileset_height * 8) / 4), output_format);
                 tileset_path = tileset_open.getLastDirectory();
             }
 
@@ -1490,31 +1559,25 @@ int main(int, char**)
 
 
             ImGui::Text("Palette Type:");
-            const char* items[] = {
+            const char* palette_options[] = {
                 "Morning",
                 "Day",
                 "Night",
                 "Cave",
                 "Building"
             };
-            static int item_current = 4; // If the selection isn't within 0..count, Combo won't display a preview
+            static int palette_current = 4;
             ImGui::SetNextItemWidth(120);
-            if (ImGui::Combo("", &item_current, items, IM_ARRAYSIZE(items)))
+            if (ImGui::Combo("", &palette_current, palette_options, IM_ARRAYSIZE(palette_options)))
             {
-                switch(item_current)
+                switch(palette_current)
                 {
-                    case 0:
-                        cur_palette = (unsigned char*)palette_morning; break;
-                    case 1:
-                        cur_palette = (unsigned char*)palette_day; break;
-                    case 2:
-                        cur_palette = (unsigned char*)palette_night; break;
-                    case 3:
-                        cur_palette = (unsigned char*)palette_cave; break;
-                    case 4:
-                        cur_palette = (unsigned char*)palette_building; break;
-                    default:
-                        break;
+                    case 0: cur_palette = (unsigned char*)palette_morning;   break;
+                    case 1: cur_palette = (unsigned char*)palette_day;       break;
+                    case 2: cur_palette = (unsigned char*)palette_night;     break;
+                    case 3: cur_palette = (unsigned char*)palette_cave;      break;
+                    case 4: cur_palette = (unsigned char*)palette_building;  break;
+                    default: break;
                 }
                 regen_palette = true;
             }
@@ -1547,7 +1610,7 @@ int main(int, char**)
             const char* save_path = pal_save.saveFileDialog(pal_save_btn, palette_path, "palette.pal", "");
             if (strlen(save_path) > 0)
             {
-                save_file((unsigned char*)palettes, pal_save.getChosenPath(), tileset_width * tileset_height);
+                save_file((unsigned char*)palettes, pal_save.getChosenPath(), tileset_width * tileset_height, output_format);
                 palette_path = pal_open.getLastDirectory();
             }
 
@@ -1643,8 +1706,8 @@ int main(int, char**)
                 mouse_pos = ImGui::GetMousePos();
                 win_pos = ImGui::GetWindowPos();
 
-                int pos_x = mouse_pos.x - win_pos.x - style.WindowPadding.x;
-                int pos_y = mouse_pos.y - win_pos.y - style.WindowPadding.y - ImGui::GetCurrentWindow()->TitleBarHeight();
+                int pos_x = mouse_pos.x - win_pos.x - style.WindowPadding.x + ImGui::GetScrollX();
+                int pos_y = mouse_pos.y - win_pos.y - style.WindowPadding.y + ImGui::GetScrollY() - ImGui::GetCurrentWindow()->TitleBarHeight();
 
                 int max_width = cell_width*4*8*cell_zoom;
                 int max_height = cell_height*4*8*cell_zoom;
@@ -1783,7 +1846,7 @@ int main(int, char**)
             if (strlen(save_path) > 0)
             {
                 cell_path = cell_save.getLastDirectory();
-                save_file((unsigned char*)cell_tiles, cell_save.getChosenPath(), cell_width * 4 * cell_height * 4);
+                save_file((unsigned char*)cell_tiles, cell_save.getChosenPath(), cell_width * 4 * cell_height * 4, output_format);
             }
 
             // Show "Save Image" dialog
@@ -1903,8 +1966,8 @@ int main(int, char**)
                 mouse_pos = ImGui::GetMousePos();
                 win_pos = ImGui::GetWindowPos();
 
-                int pos_x = mouse_pos.x - win_pos.x - style.WindowPadding.x;
-                int pos_y = mouse_pos.y - win_pos.y - style.WindowPadding.y - ImGui::GetCurrentWindow()->TitleBarHeight();
+                int pos_x = mouse_pos.x - win_pos.x - style.WindowPadding.x + ImGui::GetScrollX();
+                int pos_y = mouse_pos.y - win_pos.y - style.WindowPadding.y + ImGui::GetScrollY() - ImGui::GetCurrentWindow()->TitleBarHeight();
 
                 int max_width = map_width*4*8*map_zoom;
                 int max_height = map_height*4*8*map_zoom;
@@ -2006,7 +2069,7 @@ int main(int, char**)
             if (strlen(save_path) > 0)
             {
                 map_path = map_save.getLastDirectory();
-                save_file((unsigned char*)map_cells, map_save.getChosenPath(), map_width * map_height);
+                save_file((unsigned char*)map_cells, map_save.getChosenPath(), map_width * map_height, output_format);
             }
 
             // Show "Save Image" dialog
