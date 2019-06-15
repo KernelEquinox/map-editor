@@ -36,6 +36,14 @@
 #define PAL_ROOF    6
 #define PAL_MSG     7
 
+// Palette types
+#define PAL_MORNING    0
+#define PAL_DAY        1
+#define PAL_NIGHT      2
+#define PAL_DUNGEON    3
+#define PAL_DARK_CAVE  4
+#define PAL_BUILDING   5
+
 // DMG colors
 #define COL_WHITE   255,  255,  255
 #define COL_LGREY   128,  128,  128
@@ -62,6 +70,10 @@
 #define FMT_REDNEX 1    //  db  $69
 #define FMT_BINARY 2    //  0x69
 
+// Tileset drawing modes
+#define TOOL_PIXEL 0
+#define TOOL_FILL  1
+
 #if defined(IMGUI_IMPL_OPENGL_LOADER_GL3W)
 #include <GL/gl3w.h>    // Initialize with gl3wInit()
 #elif defined(IMGUI_IMPL_OPENGL_LOADER_GLEW)
@@ -77,6 +89,44 @@
 #if defined(_MSC_VER) && (_MSC_VER >= 1900) && !defined(IMGUI_DISABLE_WIN32_FUNCTIONS)
 #pragma comment(lib, "legacy_stdio_definitions")
 #endif
+
+
+// Undo and redo history buffers
+ImVector<unsigned char[16][16][64]> undo_history;
+ImVector<unsigned char[16][16][64]> redo_history;
+
+
+/**
+ * Replaces instances of the contiguous target color with the chosen color.
+ * Functions similarly to the "Fill" tool in MS Paint, Photoshop, etc.
+ *
+ * NOTE:
+ *   This is only a per-tile fill.
+ *   Tiles other than the one clicked will NOT be affected.
+ *
+ * @param tile - Tile currently being edited
+ * @param x - X coordinate of the pixel to fill
+ * @param y - Y coordinate of the pixel to fill
+ * @param target_color - Color to be replaced
+ * @param new_color - Color to replace with
+ *
+ * @return void - Just fills pixels, no return needed
+ */
+static void fill_color(unsigned char* tile, int x, int y, unsigned int target_color, unsigned int new_color)
+{
+    unsigned int cur_pixel = *(tile + (y * 8) + x);
+
+    // Don't replace the same color or non-targeted colors
+    if (cur_pixel == new_color) return;
+    else if (cur_pixel != target_color) return;
+    else *(tile + (y * 8) + x) = new_color;
+
+    // Recursively replace pixels in each direction relative to the current pixel
+    if (y - 1 >= 0) fill_color(tile, x, y - 1, target_color, new_color);
+    if (y + 1 <= 7) fill_color(tile, x, y + 1, target_color, new_color);
+    if (x - 1 >= 0) fill_color(tile, x - 1, y, target_color, new_color);
+    if (x + 1 <= 7) fill_color(tile, x + 1, y, target_color, new_color);
+}
 
 
 /**
@@ -95,7 +145,7 @@
  *
  * @return void - Nope, nothin'
  */
-static void get_tile(unsigned char *in_data, int in_width, int in_x, int in_y, unsigned char *out_data, int out_width, int out_x, int out_y, int bpp = 1)
+static void get_tile(unsigned char* in_data, int in_width, int in_x, int in_y, unsigned char* out_data, int out_width, int out_x, int out_y, int bpp = 1)
 {
     int pixel_x, pixel_y;
     int i = 0;
@@ -126,9 +176,9 @@ static void get_tile(unsigned char *in_data, int in_width, int in_x, int in_y, u
 char* decompress_tiles(char* data, int filesize)
 {
     int out_filesize = 128 * ceil(filesize / 128) * 8;
-    char *out_data = (char*)IM_ALLOC(out_filesize);
+    char* out_data = (char*)IM_ALLOC(out_filesize);
     memset(out_data, BLACK, out_filesize);
-    char *begin = out_data;
+    char* begin = out_data;
 
     int i = 0;
     // Loop through the entire file
@@ -170,9 +220,9 @@ char* decompress_tiles(char* data, int filesize)
 char* compress_tiles(unsigned char* data, int filesize)
 {
     int out_filesize = filesize / 4;
-    char *out_data = (char*)IM_ALLOC(out_filesize);
+    char* out_data = (char*)IM_ALLOC(out_filesize);
     memset(out_data, BLACK, out_filesize);
-    char *begin = out_data;
+    char* begin = out_data;
 
     int i = 0;
     // Loop through the entire file
@@ -215,7 +265,7 @@ char* parse_file(const char* filename, int* filesize)
 {
     unsigned int arr_pos = 0;           // Current position in conversion array
     long cur_byte = 0;                  // Temporary conversion variable
-    char *cur_pos;                      // Temporary strtol marker
+    char* cur_pos;                      // Temporary strtol marker
     bool plaintext = false;             // Test for the type of file
 
     size_t file_size = 0;
@@ -234,7 +284,7 @@ char* parse_file(const char* filename, int* filesize)
     buf[file_size] = 0;
 
     // Data conversion array
-    char *output_data = (char*)IM_ALLOC(file_size + 1);
+    char* output_data = (char*)IM_ALLOC(file_size + 1);
     memset(output_data, BLACK, file_size);
 
     char* line_end = NULL;
@@ -354,7 +404,7 @@ char* parse_file(const char* filename, int* filesize)
  *
  * @return void - It'll work guys, trust me
  */
-static void save_file(unsigned char *data, const char* filename, int filesize, int format)
+static void save_file(unsigned char* data, const char* filename, int filesize, int format)
 {
     int i = 0;
     int x = 0;
@@ -559,6 +609,8 @@ int main(int, char**)
     unsigned char* tileset_data;
     unsigned char tiles[16][16][64];
 
+    int current_tool = TOOL_PIXEL;
+
 
     /*----------------------  palette  data   ---------------------------*/
     bool first_palette = true;
@@ -577,41 +629,49 @@ int main(int, char**)
     };
 
     unsigned char palette_morning[] = {
+        // Grey
         230, 255, 131,
         172, 172, 172,
         106, 106, 106,
         57, 57, 57,
 
+        // Red
         230, 255, 131,
         255, 156, 197,
         246, 82, 49,
         57, 57, 57,
 
+        // Green
         180, 255, 82,
         98, 205, 8,
         41, 115, 0,
         57, 57, 57,
 
+        // Blue
         255, 255, 255,
         65, 98, 255,
         8, 32, 255,
         57, 57, 57,
 
+        // Yellow
         230, 255, 131,
         255, 255, 57,
         255, 131, 8,
         57, 57, 57,
 
+        // Brown
         230, 255, 131,
         197, 148, 57,
         164, 123, 24,
         57, 57, 57,
 
+        // Roof
         230, 255, 131,
         123, 255, 255,
         41, 139, 255,
         57, 57, 57,
 
+        // Msg
         255, 255, 131,
         255, 255, 131,
         115, 74, 0,
@@ -619,41 +679,49 @@ int main(int, char**)
     };
 
     unsigned char palette_day[] = {
+        // Grey
         222, 255, 222,
         172, 172, 172,
         106, 106, 106,
         57, 57, 57,
 
+        // Red
         222, 255, 222,
         255, 156, 197,
         246, 82, 49,
         57, 57, 57,
 
+        // Green
         180, 255, 82,
         98, 205, 8,
         41, 115, 0,
         57, 57, 57,
 
+        // Blue
         255, 255, 255,
         65, 98, 255,
         8, 32, 255,
         57, 57, 57,
 
+        // Yellow
         222, 255, 222,
         255, 255, 57,
         255, 131, 8,
         57, 57, 57,
 
+        // Brown
         222, 255, 222,
         197, 148, 57,
         164, 123, 24,
         57, 57, 57,
 
+        // Roof
         222, 255, 222,
         123, 255, 255,
         41, 139, 255,
         57, 57, 57,
 
+        // Msg
         255, 255, 131,
         255, 255, 131,
         115, 74, 0,
@@ -661,83 +729,99 @@ int main(int, char**)
     };
 
     unsigned char palette_night[] = {
+        // Grey
         123, 115, 197,
         90, 90, 156,
         57, 57, 98,
         0, 0, 0,
 
+        // Red
         123, 115, 197,
         115, 57, 139,
         106, 0, 65,
         0, 0, 0,
 
+        // Green
         123, 115, 197,
         65, 106, 156,
         0, 90, 106,
         0, 0, 0,
 
+        // Blue
         123, 115, 197,
         41, 41, 139,
         24, 24, 82,
         0, 0, 0,
 
+        // Yellow
         246, 246, 90,
         131, 115, 148,
         131, 115, 82,
         0, 0, 0,
 
+        // Brown
         123, 115, 197,
         98, 74, 123,
         65, 32, 41,
         0, 0, 0,
 
+        // Roof
         123, 115, 197,
         106, 98, 189,
         90, 74, 164,
         0, 0, 0,
 
+        // Msg
         255, 255, 131,
         255, 255, 131,
         115, 74, 0,
         0, 0, 0
     };
 
-    unsigned char palette_cave[] = {
+    unsigned char palette_dark_cave[] = {
+        // Grey
         8, 8, 16,
         0, 0, 0,
         0, 0, 0,
         0, 0, 0,
 
+        // Red
         8, 8, 16,
         0, 0, 0,
         0, 0, 0,
         0, 0, 0,
 
+        // Green
         8, 8, 16,
         0, 0, 0,
         0, 0, 0,
         0, 0, 0,
 
+        // Blue
         8, 8, 16,
         0, 0, 0,
         0, 0, 0,
         0, 0, 0,
 
+        // Yellow
         246, 246, 90,
         0, 0, 0,
         0, 0, 0,
         0, 0, 0,
 
+        // Brown
         8, 8, 16,
         0, 0, 0,
         0, 0, 0,
         0, 0, 0,
 
+        // Roof
         8, 8, 16,
         0, 0, 0,
         0, 0, 0,
         0, 0, 0,
 
+        // Msg
         255, 255, 131,
         255, 255, 131,
         115, 74, 0,
@@ -745,49 +829,55 @@ int main(int, char**)
     };
 
     unsigned char palette_building[] = {
+        // Grey
         246, 230, 213,
         156, 156, 156,
         106, 106, 106,
         57, 57, 57,
 
+        // Red
         246, 230, 213,
         255, 156, 197,
         246, 82, 49,
         57, 57, 57,
 
+        // Green
         148, 197, 74,
         123, 164, 8,
         74, 106, 0,
         57, 57, 57,
 
+        // Blue
         246, 230, 213,
         123, 131, 255,
         74, 74, 255,
         57, 57, 57,
 
+        // Yellow
         246, 230, 213,
         255, 255, 57,
         255, 131, 8,
         57, 57, 57,
 
+        // Brown
         213, 197, 139,
         172, 139, 57,
         131, 106, 24,
         57, 57, 57,
 
+        // Roof
         246, 230, 213,
         139, 156, 255,
         115, 131, 255,
         57, 57, 57,
 
+        // Msg
         255, 255, 131,
         255, 255, 131,
         115, 74, 0,
         0, 0, 0
     };
 
-/*
-    // This will probably be used later, but not right now
     unsigned char palette_water[] = {
         189, 189, 255,
         148, 156, 255,
@@ -799,9 +889,176 @@ int main(int, char**)
         32, 24, 148,
         0, 0, 0
     };
-*/
 
-    unsigned char *cur_palette = (unsigned char*)&palette_building;
+    unsigned char palette_roof[] = {
+        // Unused
+        172, 172, 172,
+        90, 90, 90,
+        172, 172, 172,
+        90, 90, 90,
+
+        // Olivine City
+        115, 139, 255,
+        57, 90, 123,
+        74, 74, 139,
+        41, 57, 106,
+
+        // Mahogany Town
+        98, 156, 0,
+        49, 82, 0,
+        49, 74, 57,
+        32, 41, 49,
+
+        // Dungeon
+        172, 172, 172,
+        90, 90, 90,
+        172, 172, 172,
+        139, 65, 57,
+
+        // Ecruteak City
+        255, 156, 0,
+        222, 82, 41,
+        123, 57, 16,
+        90, 32, 16,
+
+        // Blackthorn City
+        90, 82, 131,
+        41, 49, 57,
+        24, 32, 65,
+        0, 0, 0,
+
+        // Cinnabar Island
+        255, 82, 0,
+        148, 49, 0,
+        148, 41, 74,
+        139, 65, 57,
+
+        // Cerulean City
+        139, 222, 255,
+        41, 123, 255,
+        57, 65, 180,
+        57, 57, 131,
+
+        // Azalea Town
+        180, 164, 82,
+        139, 115, 24,
+        90, 90, 41,
+        82, 74, 57,
+
+        // Lake of Rage
+        255, 65, 32,
+        74, 74, 65,
+        148, 41, 74,
+        74, 74, 65,
+
+        // Violet City
+        197, 115, 255,
+        106, 57, 172,
+        98, 24, 148,
+        74, 24, 123,
+
+        // Goldenrod City
+        205, 205, 0,
+        164, 139, 65,
+        98, 98, 0,
+        82, 74, 41,
+
+        // Vermilion City
+        222, 189, 8,
+        189, 90, 0,
+        123, 90, 8,
+        90, 82, 8,
+
+        // Pallet Town
+        222, 230, 255,
+        139, 156, 180,
+        115, 115, 148,
+        82, 74, 106,
+
+        // Pewter City
+        156, 156, 131,
+        82, 98, 123,
+        74, 74, 90,
+        32, 41, 57,
+
+        // Route 4
+        115, 139, 255,
+        57, 90, 123,
+        74, 106, 156,
+        57, 57, 131,
+
+        // Indigo Plateau
+        172, 172, 172,
+        106, 106, 106,
+        90, 90, 156,
+        57, 57, 98,
+
+        // Fuchsia City
+        255, 148, 238,
+        139, 106, 164,
+        115, 49, 98,
+        90, 24, 82,
+
+        // Lavender Town
+        189, 123, 255,
+        131, 41, 255,
+        98, 57, 139,
+        65, 49, 82,
+
+        // Route 28
+        172, 172, 205,
+        131, 131, 131,
+        106, 106, 106,
+        57, 57, 57,
+
+        // Communication
+        172, 172, 172,
+        90, 90, 90,
+        172, 172, 172,
+        90, 90, 90,
+
+        // Celadon City
+        156, 255, 123,
+        255, 180, 16,
+        98, 106, 74,
+        74, 98, 24,
+
+        // Cianwood City
+        123, 82, 255,
+        57, 41, 123,
+        49, 41, 139,
+        16, 16, 65,
+
+        // Viridian City
+        172, 255, 57,
+        106, 205, 32,
+        74, 115, 65,
+        49, 82, 32,
+
+        // New Bark Town
+        164, 255, 115,
+        90, 189, 41,
+        74, 106, 65,
+        49, 74, 32,
+
+        // Saffron City
+        255, 213, 0,
+        255, 123, 0,
+        106, 106, 8,
+        65, 65, 8,
+
+        // Cherrygrove City
+        255, 115, 230,
+        255, 41, 172,
+        115, 57, 139,
+        106, 0, 65
+    };
+
+    unsigned char* cur_palette = (unsigned char*)&palette_day;
+    unsigned char* cur_roof = (unsigned char*)&palette_roof;
+    bool daytime_pal = true;
+    int palette_type = PAL_DAY;
+    int roof_id = 0;
     
     int tileset_x, tileset_y = 0;
 
@@ -810,7 +1067,7 @@ int main(int, char**)
 
 
     /*----------------------  cell  data   ------------------------------*/
-    unsigned char cell_tiles[8192][16];    // shhh
+    unsigned char cell_tiles[8192][16];
     unsigned char current_tile = 0x00;
     unsigned char current_tile_id = 0x00;
 
@@ -819,7 +1076,7 @@ int main(int, char**)
 
 
     /*----------------------  map  data   -------------------------------*/
-    unsigned char map_cells[8192];         // don't question it
+    unsigned char map_cells[8192];
     unsigned char current_cell = 0x00;
 
     int map_width = 4;
@@ -827,13 +1084,13 @@ int main(int, char**)
 
 
     /*----------------------  file  data   ------------------------------*/
-    const char *filename;
+    const char* filename;
     static int filesize;
 
-    const char *tileset_path = "./";
-    const char *palette_path = "./";
-    const char *cell_path = "./";
-    const char *map_path = "./";
+    const char* tileset_path = "./";
+    const char* palette_path = "./";
+    const char* cell_path = "./";
+    const char* map_path = "./";
 
     // Default to IntSys output format
     static int output_format = FMT_INTSYS;
@@ -875,6 +1132,80 @@ int main(int, char**)
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
+
+
+
+        //================================================================================
+        //    Main Menu
+        //================================================================================
+
+        // Top main menu bar
+        if (ImGui::BeginMainMenuBar())
+        {
+            if (ImGui::BeginMenu("File"))
+            {
+                if (ImGui::MenuItem("Quit", "Alt+F4")) break;
+                ImGui::EndMenu();
+            }
+            if (ImGui::BeginMenu("Edit"))
+            {
+                if (ImGui::MenuItem("Undo", "Ctrl+Z", false, undo_history.size()))
+                {
+                    glfwPollEvents(); frame_count = 0;
+                    if (undo_history.size())
+                    {
+                        redo_history.push_back(tiles);
+                        memcpy(tiles, undo_history.back(), sizeof(tiles));
+                        undo_history.pop_back();
+                        regen_tileset = true;
+                        regen_palette = true;
+                    }
+                }
+                if (ImGui::MenuItem("Redo", "Ctrl+Y", false, redo_history.size()))
+                {
+                    glfwPollEvents(); frame_count = 0;
+                    if (redo_history.size())
+                    {
+                        undo_history.push_back(tiles);
+                        memcpy(tiles, redo_history.back(), sizeof(tiles));
+                        redo_history.pop_back();
+                        regen_tileset = true;
+                        regen_palette = true;
+                    }
+                }
+                ImGui::EndMenu();
+            }
+            ImGui::EndMainMenuBar();
+        }
+
+        // Main menu shortcuts
+        if (io.KeyCtrl || io.KeySuper)
+        {
+            // Undo
+            if (ImGui::IsKeyPressedMap(ImGuiKey_Z))
+            {
+                if (undo_history.size())
+                {
+                    redo_history.push_back(tiles);
+                    memcpy(tiles, undo_history.back(), sizeof(tiles));
+                    undo_history.pop_back();
+                    regen_tileset = true;
+                    regen_palette = true;
+                }
+            }
+            // Redo
+            if (ImGui::IsKeyPressedMap(ImGuiKey_Y))
+            {
+                if (redo_history.size())
+                {
+                    undo_history.push_back(tiles);
+                    memcpy(tiles, redo_history.back(), sizeof(tiles));
+                    redo_history.pop_back();
+                    regen_tileset = true;
+                    regen_palette = true;
+                }
+            }
+        }
 
 
 
@@ -922,13 +1253,13 @@ int main(int, char**)
             ImGui::NewLine();
 
             ImGui::Text("Output Format:");
-            const char* items[] = {
+            const char* formats[] = {
                 "IntSys (069h)",
                 "Rednex ($69)",
                 "Binary (0x69)"
             };
             ImGui::SetNextItemWidth(120);
-            ImGui::Combo("", &output_format, items, IM_ARRAYSIZE(items));
+            ImGui::Combo("##Output Formats", &output_format, formats, IM_ARRAYSIZE(formats));
 
             ImGui::NewLine();
 
@@ -1032,6 +1363,8 @@ int main(int, char**)
              * Change the pixel that was clicked.
              */
 
+            static bool first_click = true;
+
             if (ImGui::IsMouseDown(0) && ImGui::IsWindowFocused() && !ImGui::GetMouseCursor())
             {
                 mouse_pos = ImGui::GetMousePos();
@@ -1074,8 +1407,27 @@ int main(int, char**)
 
                     if (edit_mode == TILE_EDIT && clicked_inside)
                     {
-                        // Set pixel color (default: BLACK)
-                        tiles[tile_y][tile_x][(pixel_y*8) + pixel_x] = current_color;
+                        // Undo/Redo functionality
+                        if (first_click)
+                        {
+                            first_click = false;
+                            redo_history.clear();
+                            if (undo_history.Size == 10)
+                                undo_history.erase(undo_history.begin());
+                            undo_history.push_back(tiles);
+                        }
+
+                        if (current_tool == TOOL_PIXEL)
+                        {
+                            // Set pixel color (default: BLACK)
+                            tiles[tile_y][tile_x][(pixel_y * 8) + pixel_x] = current_color;
+                        }
+                        else if (current_tool == TOOL_FILL)
+                        {
+                            unsigned char* cur_tile = (unsigned char*)tiles[tile_y][tile_x];
+                            unsigned int cur_pixel = *(cur_tile + (pixel_y * 8) + pixel_x);
+                            fill_color(cur_tile, pixel_x, pixel_y, cur_pixel, current_color);
+                        }
 
                         // Regenerate the texture
                         glBindTexture(GL_TEXTURE_2D, tile_textures[tex_id]);
@@ -1094,6 +1446,9 @@ int main(int, char**)
                     }
                 }
             }
+
+            if (!ImGui::IsMouseDown(0) && !first_click)
+                first_click = true;
 
             ImGui::End();
 
@@ -1124,9 +1479,6 @@ int main(int, char**)
 
             if (!tileset_width) tileset_width = 1;
 
-            // Hell yeah, no limits \o/
-            //if (tileset_width * tileset_height > 256) tileset_height--;
-
 
 
             // TILE HEIGHT
@@ -1139,11 +1491,21 @@ int main(int, char**)
 
             if (!tileset_height) tileset_height = 1;
 
-            // Hell yeah, no limits \o/
-            //if (tileset_height * tileset_width > 256) tileset_width--;
+            ImGui::NewLine();
+
+
+            ImGui::Text("Drawing Tool:");
+            const char* tools[] = {
+                "Pixel",
+                "Fill"
+            };
+            ImGui::SetNextItemWidth(120);
+            ImGui::Combo("##Drawing Tools", &current_tool, tools, IM_ARRAYSIZE(tools));
 
             ImGui::NewLine();
 
+
+            // Pick 1 of 4 DMG colors for drawing
             ImGui::Text("Colors:");
             static GLuint cur_color_tex = color_textures[3];
             static bool cur_color = false;
@@ -1240,11 +1602,13 @@ int main(int, char**)
                 // Image load failed, fall back
                 else
                 {
-                    char *file_data = parse_file(filename, &filesize);
+                    char* file_data = parse_file(filename, &filesize);
                     tileset_data = (unsigned char*)decompress_tiles(file_data, filesize);
                     tileset_width = 16;
                     tileset_height = ceil((float)filesize / (float)(tileset_width * 8)) / 2;
-                    memcpy(tiles, tileset_data, sizeof(tiles));
+                    if (filesize > sizeof(tiles))
+                        ImGui::OpenPopup("ERROR##Tileset Dimensions");
+                    else memcpy(tiles, tileset_data, sizeof(tiles));
                 }
 
                 regen_tileset = true;
@@ -1254,13 +1618,26 @@ int main(int, char**)
                 current_tile = tile_textures[0];
             }
 
+            if (ImGui::BeginPopupModal("ERROR##Tileset Dimensions", NULL, ImGuiWindowFlags_AlwaysAutoResize))
+            {
+                ImGui::Text("\nFile exceeds the maximum dimensions!\n\n");
+                tileset_width = 16;
+                tileset_height = 8;
+                ImGui::Separator();
+
+                ImGui::SetCursorPosX((ImGui::GetWindowContentRegionWidth() - 120) / 2 + style.WindowPadding.x);
+                if (ImGui::Button("OK", ImVec2(120, 0))) { ImGui::CloseCurrentPopup(); }
+                ImGui::SetItemDefaultFocus();
+                ImGui::EndPopup();
+            }
+
             // Show "Save" dialog
             const bool tileset_save_btn = ImGui::Button("Save File...##Tileset");
             static ImGuiFs::Dialog tileset_save;
             const char* save_path = tileset_save.saveFileDialog(tileset_save_btn, tileset_path, "tileset.dat", "");
             if (strlen(save_path) > 0)
             {
-                char *file_data = compress_tiles((unsigned char*)tiles, tileset_width * 8 * tileset_height * 8);
+                char* file_data = compress_tiles((unsigned char*)tiles, tileset_width * 8 * tileset_height * 8);
                 save_file((unsigned char*)file_data, tileset_save.getChosenPath(), tileset_width * 8 * ((tileset_height * 8) / 4), output_format);
                 tileset_path = tileset_open.getLastDirectory();
             }
@@ -1271,7 +1648,7 @@ int main(int, char**)
             const char* img_save_path = tileset_img_save.saveFileDialog(tileset_img_save_btn, tileset_path, "tileset.png", "");
             if (strlen(img_save_path) > 0)
             {
-                unsigned char *png_data = (unsigned char*)IM_ALLOC(tileset_width * 8 * tileset_height * 8);
+                unsigned char* png_data = (unsigned char*)IM_ALLOC(tileset_width * 8 * tileset_height * 8);
 
                 // Convert blocky image to PNG data
                 int tile_x, tile_y;
@@ -1374,24 +1751,52 @@ int main(int, char**)
                         switch (cur_pixel)
                         {
                             case WHITE:
-                                a = cur_palette[pal * 12];
-                                b = cur_palette[(pal * 12) + 1];
-                                c = cur_palette[(pal * 12) + 2];
+                                if (pal == PAL_BLUE && palette_type < PAL_DUNGEON)
+                                {
+                                    a = (daytime_pal ? palette_water[0] : palette_water[12]);
+                                    b = (daytime_pal ? palette_water[1] : palette_water[13]);
+                                    c = (daytime_pal ? palette_water[2] : palette_water[14]);
+                                    break;
+                                }
+                                a = (pal == PAL_ROOF ? cur_palette[0] : cur_palette[pal * 12]);
+                                b = (pal == PAL_ROOF ? cur_palette[1] : cur_palette[(pal * 12) + 1]);
+                                c = (pal == PAL_ROOF ? cur_palette[2] : cur_palette[(pal * 12) + 2]);
                                 break;
                             case LGREY:
-                                a = cur_palette[(pal * 12) + 3];
-                                b = cur_palette[(pal * 12) + 4];
-                                c = cur_palette[(pal * 12) + 5];
+                                if (pal == PAL_BLUE && palette_type < PAL_DUNGEON)
+                                {
+                                    a = (daytime_pal ? palette_water[3] : palette_water[15]);
+                                    b = (daytime_pal ? palette_water[4] : palette_water[16]);
+                                    c = (daytime_pal ? palette_water[5] : palette_water[17]);
+                                    break;
+                                }
+                                a = (pal == PAL_ROOF ? cur_roof[0] : cur_palette[(pal * 12) + 3]);
+                                b = (pal == PAL_ROOF ? cur_roof[1] : cur_palette[(pal * 12) + 4]);
+                                c = (pal == PAL_ROOF ? cur_roof[2] : cur_palette[(pal * 12) + 5]);
                                 break;
                             case DGREY:
-                                a = cur_palette[(pal * 12) + 6];
-                                b = cur_palette[(pal * 12) + 7];
-                                c = cur_palette[(pal * 12) + 8];
+                                if (pal == PAL_BLUE && palette_type < PAL_DUNGEON)
+                                {
+                                    a = (daytime_pal ? palette_water[6] : palette_water[18]);
+                                    b = (daytime_pal ? palette_water[7] : palette_water[19]);
+                                    c = (daytime_pal ? palette_water[8] : palette_water[20]);
+                                    break;
+                                }
+                                a = (pal == PAL_ROOF ? cur_roof[3] : cur_palette[(pal * 12) + 6]);
+                                b = (pal == PAL_ROOF ? cur_roof[4] : cur_palette[(pal * 12) + 7]);
+                                c = (pal == PAL_ROOF ? cur_roof[5] : cur_palette[(pal * 12) + 8]);
                                 break;
                             case BLACK:
-                                a = cur_palette[(pal * 12) + 9];
-                                b = cur_palette[(pal * 12) + 10];
-                                c = cur_palette[(pal * 12) + 11];
+                                if (pal == PAL_BLUE && palette_type < PAL_DUNGEON)
+                                {
+                                    a = (daytime_pal ? palette_water[9] : palette_water[21]);
+                                    b = (daytime_pal ? palette_water[10] : palette_water[22]);
+                                    c = (daytime_pal ? palette_water[11] : palette_water[23]);
+                                    break;
+                                }
+                                a = (pal == PAL_ROOF ? cur_palette[9] : cur_palette[(pal * 12) + 9]);
+                                b = (pal == PAL_ROOF ? cur_palette[10] : cur_palette[(pal * 12) + 10]);
+                                c = (pal == PAL_ROOF ? cur_palette[11] : cur_palette[(pal * 12) + 11]);
                                 break;
                             default:
                                 a = 0; b = 0; c = 0; break;
@@ -1428,10 +1833,10 @@ int main(int, char**)
             }
 
 
-
             ImGuiColorEditFlags pal_flags = ImGuiColorEditFlags_NoAlpha | ImGuiColorEditFlags_NoPicker | ImGuiColorEditFlags_NoTooltip;
 
 
+            // Set an individual invisible button for each tile
             int orig_x = ImGui::GetCursorPos().x;
             for (int i = 0; i < tileset_width * tileset_height; i++)
             {
@@ -1440,7 +1845,7 @@ int main(int, char**)
 
                 ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0.00f, 0.0f));
 
-                if ((i % 16) != 0) ImGui::SameLine();
+                if ((i % tileset_width) != 0) ImGui::SameLine();
                 else if (i) ImGui::SetCursorPos(ImVec2(orig_x, ImGui::GetCursorPos().y + (8 * tile_zoom)));
 
                 ImGui::PopStyleVar();
@@ -1451,10 +1856,26 @@ int main(int, char**)
                     ImGui::OpenPopup("Palette List");
 
 
+                /*
+                 * PALETTE POPUP
+                 *
+                 * Choose the color of individual tiles.
+                 */
+                const char* palette_colors[] = {
+                    "Grey",
+                    "Red",
+                    "Green",
+                    "Blue",
+                    "Yellow",
+                    "Brown",
+                    "Roof",
+                    "Message"
+                };
                 if (ImGui::BeginPopup("Palette List"))
                 {
                     ImGui::BeginGroup();
                     ImGui::Text("Palettes");
+
                     for (int n = 0; n < 8; n++)
                     {
                         ImGui::PushID(n);
@@ -1462,7 +1883,10 @@ int main(int, char**)
                         if (n % 8)
                             ImGui::SameLine(0.0f, ImGui::GetStyle().ItemSpacing.y);
 
-                        if (ImGui::ColorButton("##palette", pal_colors[n], pal_flags, ImVec2(20, 20)))
+                        bool btn_clicked = ImGui::ColorButton("##palette", pal_colors[n], pal_flags, ImVec2(20, 20));
+                        if (ImGui::IsItemHovered())
+                            ImGui::SetTooltip("%s", palette_colors[n]);
+                        if (btn_clicked)
                         {
                             int tile_y = i / tileset_width;
                             int tile_x = i % tileset_width;
@@ -1479,24 +1903,52 @@ int main(int, char**)
                                 switch (cur_pixel)
                                 {
                                     case WHITE:
-                                        a = cur_palette[n * 12];
-                                        b = cur_palette[(n * 12) + 1];
-                                        c = cur_palette[(n * 12) + 2];
+                                        if (n == PAL_BLUE && palette_type < PAL_DUNGEON)
+                                        {
+                                            a = (daytime_pal ? palette_water[0] : palette_water[12]);
+                                            b = (daytime_pal ? palette_water[1] : palette_water[13]);
+                                            c = (daytime_pal ? palette_water[2] : palette_water[14]);
+                                            break;
+                                        }
+                                        a = (n == PAL_ROOF ? cur_palette[0] : cur_palette[n * 12]);
+                                        b = (n == PAL_ROOF ? cur_palette[1] : cur_palette[(n * 12) + 1]);
+                                        c = (n == PAL_ROOF ? cur_palette[2] : cur_palette[(n * 12) + 2]);
                                         break;
                                     case LGREY:
-                                        a = cur_palette[(n * 12) + 3];
-                                        b = cur_palette[(n * 12) + 4];
-                                        c = cur_palette[(n * 12) + 5];
+                                        if (n == PAL_BLUE && palette_type < PAL_DUNGEON)
+                                        {
+                                            a = (daytime_pal ? palette_water[3] : palette_water[15]);
+                                            b = (daytime_pal ? palette_water[4] : palette_water[16]);
+                                            c = (daytime_pal ? palette_water[5] : palette_water[17]);
+                                            break;
+                                        }
+                                        a = (n == PAL_ROOF ? cur_roof[0] : cur_palette[(n * 12) + 3]);
+                                        b = (n == PAL_ROOF ? cur_roof[1] : cur_palette[(n * 12) + 4]);
+                                        c = (n == PAL_ROOF ? cur_roof[2] : cur_palette[(n * 12) + 5]);
                                         break;
                                     case DGREY:
-                                        a = cur_palette[(n * 12) + 6];
-                                        b = cur_palette[(n * 12) + 7];
-                                        c = cur_palette[(n * 12) + 8];
+                                        if (n == PAL_BLUE && palette_type < PAL_DUNGEON)
+                                        {
+                                            a = (daytime_pal ? palette_water[6] : palette_water[18]);
+                                            b = (daytime_pal ? palette_water[7] : palette_water[19]);
+                                            c = (daytime_pal ? palette_water[8] : palette_water[20]);
+                                            break;
+                                        }
+                                        a = (n == PAL_ROOF ? cur_roof[3] : cur_palette[(n * 12) + 6]);
+                                        b = (n == PAL_ROOF ? cur_roof[4] : cur_palette[(n * 12) + 7]);
+                                        c = (n == PAL_ROOF ? cur_roof[5] : cur_palette[(n * 12) + 8]);
                                         break;
                                     case BLACK:
-                                        a = cur_palette[(n * 12) + 9];
-                                        b = cur_palette[(n * 12) + 10];
-                                        c = cur_palette[(n * 12) + 11];
+                                        if (n == PAL_BLUE && palette_type < PAL_DUNGEON)
+                                        {
+                                            a = (daytime_pal ? palette_water[9] : palette_water[21]);
+                                            b = (daytime_pal ? palette_water[10] : palette_water[22]);
+                                            c = (daytime_pal ? palette_water[11] : palette_water[23]);
+                                            break;
+                                        }
+                                        a = (n == PAL_ROOF ? cur_palette[9] : cur_palette[(n * 12) + 9]);
+                                        b = (n == PAL_ROOF ? cur_palette[10] : cur_palette[(n * 12) + 10]);
+                                        c = (n == PAL_ROOF ? cur_palette[11] : cur_palette[(n * 12) + 11]);
                                         break;
                                     default:
                                         a = 0; b = 0; c = 0; break;
@@ -1528,7 +1980,7 @@ int main(int, char**)
              * Display a color palette overlaid on top of the tileset.
              */
 
-            if (show_tileset_window)
+            if (!first_tileset)
             {
                 ImGui::SetCursorPos(ImVec2(tileset_x, tileset_y));
                 int orig_x = tileset_x;
@@ -1563,26 +2015,115 @@ int main(int, char**)
                 "Morning",
                 "Day",
                 "Night",
-                "Cave",
+                "Dungeon",
+                "Dark Cave",
                 "Building"
             };
-            static int palette_current = 4;
             ImGui::SetNextItemWidth(120);
-            if (ImGui::Combo("", &palette_current, palette_options, IM_ARRAYSIZE(palette_options)))
+            if (ImGui::Combo("##Pallete Types", &palette_type, palette_options, IM_ARRAYSIZE(palette_options)))
             {
-                switch(palette_current)
+                switch(palette_type)
                 {
-                    case 0: cur_palette = (unsigned char*)palette_morning;   break;
-                    case 1: cur_palette = (unsigned char*)palette_day;       break;
-                    case 2: cur_palette = (unsigned char*)palette_night;     break;
-                    case 3: cur_palette = (unsigned char*)palette_cave;      break;
-                    case 4: cur_palette = (unsigned char*)palette_building;  break;
+                    case 0: cur_palette = (unsigned char*)palette_morning;    daytime_pal = true;   cur_roof = (unsigned char*)(palette_roof + (roof_id * 12));      break;
+                    case 1: cur_palette = (unsigned char*)palette_day;        daytime_pal = true;   cur_roof = (unsigned char*)(palette_roof + (roof_id * 12));      break;
+                    case 2: cur_palette = (unsigned char*)palette_night;      daytime_pal = false;  cur_roof = (unsigned char*)(palette_roof + (roof_id * 12) + 6);  break;
+                    case 3: cur_palette = (unsigned char*)palette_day;        daytime_pal = false;  cur_roof = (unsigned char*)(palette_roof + (roof_id * 12) + 6);  break;
+                    case 4: cur_palette = (unsigned char*)palette_dark_cave;  daytime_pal = false;  cur_roof = (unsigned char*)(palette_roof + (roof_id * 12) + 6);  break;
+                    case 5: cur_palette = (unsigned char*)palette_building;   daytime_pal = true;   cur_roof = (unsigned char*)(palette_roof + (roof_id * 12));      break;
                     default: break;
                 }
                 regen_palette = true;
             }
 
 
+            ImGui::NewLine();
+
+
+            ImGui::Text("Roof Type:");
+            const char* roof_options[] = {
+                "Unused",
+                "Olivine City",
+                "Mahogany Town",
+                "Dungeon",
+                "Ecruteak City",
+                "Blackthorn City",
+                "Cinnabar Island",
+                "Cerulean City",
+                "Azalea Town",
+                "Lake of Rage",
+                "Violet City",
+                "Goldenrod City",
+                "Vermilion City",
+                "Pallet Town",
+                "Pewter City",
+                "Route 4",
+                "Indigo Plateau",
+                "Fuchsia City",
+                "Lavender Town",
+                "Route 28",
+                "Communication",
+                "Celadon City",
+                "Cianwood City",
+                "Viridian City",
+                "New Bark Town",
+                "Saffron City",
+                "Cherrygrove City"
+            };
+            const ImVec4 roof_colors[] = {
+                ImVec4(172.0f/255.0f, 172.0f/255.0f, 172.0f/255.0f, 1.0f),
+                ImVec4(115.0f/255.0f, 139.0f/255.0f, 255.0f/255.0f, 1.0f),
+                ImVec4(98.0f/255.0f,  156.0f/255.0f, 0.0f/255.0f,   1.0f),
+                ImVec4(172.0f/255.0f, 172.0f/255.0f, 172.0f/255.0f, 1.0f),
+                ImVec4(255.0f/255.0f, 156.0f/255.0f, 0.0f/255.0f,   1.0f),
+                ImVec4(90.0f/255.0f,  82.0f/255.0f,  131.0f/255.0f, 1.0f),
+                ImVec4(255.0f/255.0f, 82.0f/255.0f,  0.0f/255.0f,   1.0f),
+                ImVec4(139.0f/255.0f, 222.0f/255.0f, 255.0f/255.0f, 1.0f),
+                ImVec4(180.0f/255.0f, 164.0f/255.0f, 82.0f/255.0f,  1.0f),
+                ImVec4(255.0f/255.0f, 65.0f/255.0f,  32.0f/255.0f,  1.0f),
+                ImVec4(197.0f/255.0f, 115.0f/255.0f, 255.0f/255.0f, 1.0f),
+                ImVec4(205.0f/255.0f, 205.0f/255.0f, 0.0f/255.0f,   1.0f),
+                ImVec4(222.0f/255.0f, 189.0f/255.0f, 8.0f/255.0f,   1.0f),
+                ImVec4(222.0f/255.0f, 230.0f/255.0f, 255.0f/255.0f, 1.0f),
+                ImVec4(156.0f/255.0f, 156.0f/255.0f, 131.0f/255.0f, 1.0f),
+                ImVec4(115.0f/255.0f, 139.0f/255.0f, 255.0f/255.0f, 1.0f),
+                ImVec4(172.0f/255.0f, 172.0f/255.0f, 172.0f/255.0f, 1.0f),
+                ImVec4(255.0f/255.0f, 148.0f/255.0f, 238.0f/255.0f, 1.0f),
+                ImVec4(189.0f/255.0f, 123.0f/255.0f, 255.0f/255.0f, 1.0f),
+                ImVec4(172.0f/255.0f, 172.0f/255.0f, 205.0f/255.0f, 1.0f),
+                ImVec4(172.0f/255.0f, 172.0f/255.0f, 172.0f/255.0f, 1.0f),
+                ImVec4(156.0f/255.0f, 255.0f/255.0f, 123.0f/255.0f, 1.0f),
+                ImVec4(123.0f/255.0f, 82.0f/255.0f,  255.0f/255.0f, 1.0f),
+                ImVec4(172.0f/255.0f, 255.0f/255.0f, 57.0f/255.0f,  1.0f),
+                ImVec4(164.0f/255.0f, 255.0f/255.0f, 115.0f/255.0f, 1.0f),
+                ImVec4(255.0f/255.0f, 213.0f/255.0f, 0.0f/255.0f,   1.0f),
+                ImVec4(255.0f/255.0f, 115.0f/255.0f, 230.0f/255.0f, 1.0f),
+                ImVec4(255.0f/255.0f, 41.0f/255.0f,  172.0f/255.0f, 1.0f)
+            };
+            static const char* roof_current = roof_options[0];
+            ImGui::SetNextItemWidth(150);
+            if (ImGui::BeginCombo("##Roof Colors", roof_current, 0))
+            {
+                for (int x = 0; x < IM_ARRAYSIZE(roof_options); x++)
+                {
+                    ImGui::PushStyleColor(ImGuiCol_Text, roof_colors[x]);
+                    bool selected = (roof_current == roof_options[x]);
+                    if (ImGui::Selectable(roof_options[x], selected))
+                    {
+                        roof_current = roof_options[x];
+                        roof_id = x;
+                        cur_roof = (unsigned char*)(palette_roof + (x * 12));
+                        // Move onto nighttime palette if it's a darker palette
+                        if (!daytime_pal) cur_roof += 6;
+                        regen_palette = true;
+                    }
+                    if (selected)
+                        ImGui::SetItemDefaultFocus();
+                    ImGui::PopStyleColor();
+                }
+                ImGui::EndCombo();
+            }
+
+            
             ImGui::NewLine();
 
 
@@ -1597,8 +2138,7 @@ int main(int, char**)
             filename = pal_open.chooseFileDialog(pal_open_btn, palette_path, "");
             if (strlen(filename) > 0)
             {
-                // Find texture offset
-                unsigned char *file_data = (unsigned char*)parse_file(filename, &filesize);
+                unsigned char* file_data = (unsigned char*)parse_file(filename, &filesize);
                 memcpy(palettes, file_data, sizeof(palettes));
                 palette_path = pal_open.getLastDirectory();
                 regen_palette = true;
@@ -1620,7 +2160,7 @@ int main(int, char**)
             const char* img_save_path = pal_img_save.saveFileDialog(pal_img_save_btn, palette_path, "palette.png", "");
             if (strlen(img_save_path) > 0)
             {
-                unsigned char *png_data = (unsigned char*)IM_ALLOC(tileset_width * 8 * 3 * tileset_height * 8);
+                unsigned char* png_data = (unsigned char*)IM_ALLOC(tileset_width * 8 * 3 * tileset_height * 8);
 
                 // Convert blocky image to PNG data
                 int tile_x, tile_y;
@@ -1690,7 +2230,7 @@ int main(int, char**)
             }
 
             // Make cell area draggable
-            ImVec2 drag_area = ImVec2(8*4*8 * cell_zoom, 8*4*8 * cell_zoom);
+            ImVec2 drag_area = ImVec2(cell_width * 4 * 8 * cell_zoom, cell_height * 4 * 8 * cell_zoom);
             ImGui::SetCursorPos(ImVec2(orig_x, orig_y));
             ImGui::InvisibleButton("canvas", drag_area);
 
@@ -1829,14 +2369,31 @@ int main(int, char**)
             if (strlen(filename) > 0)
             {
                 // Find texture offset
-                unsigned char *file_data = (unsigned char*)parse_file(filename, &filesize);
-                memcpy(cell_tiles, file_data, sizeof(cell_tiles));
-                // Determine cell height
+                unsigned char* file_data = (unsigned char*)parse_file(filename, &filesize);
+                // Determine initial cell height
                 if (filesize > 1024) cell_width = 16;
                 else cell_width = 8;
                 if (filesize > 2048) cell_height = 16;
                 else cell_height = 8;
+
+                if (filesize > sizeof(cell_tiles))
+                    ImGui::OpenPopup("ERROR##Cell Dimensions");
+                else memcpy(cell_tiles, file_data, sizeof(cell_tiles));
+
                 cell_path = cell_open.getLastDirectory();
+            }
+
+            if (ImGui::BeginPopupModal("ERROR##Cell Dimensions", NULL, ImGuiWindowFlags_AlwaysAutoResize))
+            {
+                ImGui::Text("\nFile exceeds the maximum dimensions!\n\n");
+                cell_width = 8;
+                cell_height = 8;
+                ImGui::Separator();
+
+                ImGui::SetCursorPosX((ImGui::GetWindowContentRegionWidth() - 120) / 2 + style.WindowPadding.x);
+                if (ImGui::Button("OK", ImVec2(120, 0))) { ImGui::CloseCurrentPopup(); }
+                ImGui::SetItemDefaultFocus();
+                ImGui::EndPopup();
             }
 
             // Show "Save" dialog
@@ -1855,13 +2412,13 @@ int main(int, char**)
             const char* img_save_path = cell_img_save.saveFileDialog(cell_img_save_btn, cell_path, "cell.png", "");
             if (strlen(img_save_path) > 0)
             {
-                unsigned char *png_data = (unsigned char*)IM_ALLOC((cell_width * 4 * 8 * 3) * (cell_height * 4 * 8));
+                unsigned char* png_data = (unsigned char*)IM_ALLOC((cell_width * 4 * 8 * 3) * (cell_height * 4 * 8));
 
                 // Convert blocky image to PNG data
                 int cell_x, cell_y;
                 int tile_x, tile_y;
                 int bpp = (use_palette ? 3 : 1);
-                unsigned char *bpp_tiles = (use_palette ? (unsigned char*)color_tiles : (unsigned char*)tiles);
+                unsigned char* bpp_tiles = (use_palette ? (unsigned char*)color_tiles : (unsigned char*)tiles);
                 for (cell_y = 0; cell_y < cell_height; cell_y++)
                 {
                     for (cell_x = 0; cell_x < cell_width; cell_x++)
@@ -1947,7 +2504,7 @@ int main(int, char**)
 
 
             // Make map area draggable
-            ImVec2 drag_area = ImVec2(map_width*4*8 * map_zoom, map_height*4*8 * map_zoom);
+            ImVec2 drag_area = ImVec2(map_width * 4 * 8 * map_zoom, map_height * 4 * 8 * map_zoom);
             ImGui::SetCursorPos(ImVec2(orig_x, orig_y));
             ImGui::InvisibleButton("canvas", drag_area);
 
@@ -1969,8 +2526,8 @@ int main(int, char**)
                 int pos_x = mouse_pos.x - win_pos.x - style.WindowPadding.x + ImGui::GetScrollX();
                 int pos_y = mouse_pos.y - win_pos.y - style.WindowPadding.y + ImGui::GetScrollY() - ImGui::GetCurrentWindow()->TitleBarHeight();
 
-                int max_width = map_width*4*8*map_zoom;
-                int max_height = map_height*4*8*map_zoom;
+                int max_width = map_width * 4 * 8 * map_zoom;
+                int max_height = map_height * 4 * 8 * map_zoom;
 
                 bool within_bounds = (pos_x < max_width && pos_y < max_height);
                 static bool clicked_inside = true;
@@ -2056,10 +2613,23 @@ int main(int, char**)
             filename = map_open.chooseFileDialog(map_open_btn, map_path, "");
             if (strlen(filename) > 0)
             {
-                // Find texture offset
-                unsigned char *file_data = (unsigned char*)parse_file(filename, &filesize);
-                memcpy(map_cells, file_data, sizeof(map_cells));
+                unsigned char* file_data = (unsigned char*)parse_file(filename, &filesize);
+                if (filesize > sizeof(map_cells))
+                    ImGui::OpenPopup("ERROR##Map Dimensions");
+                else memcpy(map_cells, file_data, sizeof(map_cells));
+
                 map_path = map_open.getLastDirectory();
+            }
+
+            if (ImGui::BeginPopupModal("ERROR##Map Dimensions", NULL, ImGuiWindowFlags_AlwaysAutoResize))
+            {
+                ImGui::Text("\nFile exceeds the maximum dimensions!\n\n");
+                ImGui::Separator();
+
+                ImGui::SetCursorPosX((ImGui::GetWindowContentRegionWidth() - 120) / 2 + style.WindowPadding.x);
+                if (ImGui::Button("OK", ImVec2(120, 0))) { ImGui::CloseCurrentPopup(); }
+                ImGui::SetItemDefaultFocus();
+                ImGui::EndPopup();
             }
 
             // Show "Save" dialog
@@ -2078,13 +2648,13 @@ int main(int, char**)
             const char* img_save_path = map_img_save.saveFileDialog(map_img_save_btn, map_path, "map.png", "");
             if (strlen(img_save_path) > 0)
             {
-                unsigned char *png_data = (unsigned char*)IM_ALLOC((map_width * 4 * 8 * 3) * (map_height * 4 * 8));
+                unsigned char* png_data = (unsigned char*)IM_ALLOC((map_width * 4 * 8 * 3) * (map_height * 4 * 8));
 
                 // Convert blocky image to PNG data
                 int map_x, map_y;
                 int tile_x, tile_y;
                 int bpp = (use_palette ? 3 : 1);
-                unsigned char *bpp_tiles = (use_palette ? (unsigned char*)color_tiles : (unsigned char*)tiles);
+                unsigned char* bpp_tiles = (use_palette ? (unsigned char*)color_tiles : (unsigned char*)tiles);
                 for (map_y = 0; map_y < map_height; map_y++)
                 {
                     for (map_x = 0; map_x < map_width; map_x++)
