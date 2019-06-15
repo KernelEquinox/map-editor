@@ -1268,8 +1268,8 @@ int main(int, char**)
 
             ImGui::NewLine();
 
-            // Version info, might update this sometimes??
-            ImGui::Text("Map Test Thingy v0.1d");
+            // Version info, this gets updated sometimes
+            ImGui::Text("Map Test Thingy v0.2");
 
             // Only set zoom button size on initial render
             if (zoom_btn_size == 0.0f) zoom_btn_size = ImGui::GetFrameHeight();
@@ -1611,6 +1611,7 @@ int main(int, char**)
                     else memcpy(tiles, tileset_data, sizeof(tiles));
                 }
 
+                first_tileset = true;
                 regen_tileset = true;
                 first_palette = true;
                 regen_palette = true;
