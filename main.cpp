@@ -408,7 +408,13 @@ static void save_file(unsigned char* data, const char* filename, int filesize, i
 {
     int i = 0;
     int x = 0;
-    FILE* f = ImFileOpen(filename, "w");
+    FILE* f;
+    if (format == FMT_BINARY)
+    {
+        f = ImFileOpen(filename, "wb");
+    } else {
+        f = ImFileOpen(filename, "w");
+    }
 
     // Not sure if the compiler takes care of this, but I'll optimize the loop anyway
     switch(format)
